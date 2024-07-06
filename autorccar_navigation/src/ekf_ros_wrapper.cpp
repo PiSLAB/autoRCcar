@@ -20,12 +20,12 @@ EKFWrapper::EKFWrapper(EKF* pEKF):Node("ins_gps"), mpEKF(pEKF)
 
 void EKFWrapper::ImuCallback(const autorccar_interfaces::msg::Imu & msg)
 {
-    // double imu_time = msg.timestamp.sec + msg.timestamp.nanosec*1e-9;
-    // Eigen::Vector3d acc = Eigen::Vector3d(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
-    // Eigen::Vector3d gyro = Eigen::Vector3d(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
     double imu_time = msg.timestamp.sec + msg.timestamp.nanosec*1e-9;
-    Eigen::Vector3d acc = Eigen::Vector3d(msg.linear_acceleration.y, msg.linear_acceleration.x, -msg.linear_acceleration.z);
-    Eigen::Vector3d gyro = Eigen::Vector3d(msg.angular_velocity.y, msg.angular_velocity.x, -msg.angular_velocity.z);
+    Eigen::Vector3d acc = Eigen::Vector3d(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
+    Eigen::Vector3d gyro = Eigen::Vector3d(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
+    //double imu_time = msg.timestamp.sec + msg.timestamp.nanosec*1e-9;
+    //Eigen::Vector3d acc = Eigen::Vector3d(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
+    //Eigen::Vector3d gyro = Eigen::Vector3d(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
 
     // Set EKF start time 
     if (!mpEKF->is_time_set)
