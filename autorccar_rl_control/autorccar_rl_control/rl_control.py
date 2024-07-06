@@ -8,7 +8,7 @@ import autoRCcar_gym
 import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
-import sys, ast
+import sys, ast, math
 # from stable_baselines3 import PPO
 from sb3_contrib import TQC
 
@@ -17,7 +17,7 @@ from std_msgs.msg import Int8
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import Vector3
 
-
+from utils import quat2eulr, calc_delta_angle
 
 class RLControl(Node):
     def __init__(self):
@@ -25,8 +25,8 @@ class RLControl(Node):
 
         # Configure QoS profile for publishing and subscribing
         qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE, #BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE, #TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
@@ -46,11 +46,11 @@ class RLControl(Node):
             self.ser.open()
 
         ## Variable
-        self.command = None
+        self.command = 0
         self.key_steer = None
         self.key_esc = None
-        self.mode = None
         self.dt = 0.1
+        self.loop = 0
 
         self.ESC_PWM_MIN = 3277
         self.ESC_PWM_N = 4915
@@ -73,40 +73,38 @@ class RLControl(Node):
         self.env = gym.make('avoid-v1')
         self.model = TQC.load('avoid-v1_tqc2', env=self.env)
 
-        wp = []  ## Set waypoint
+        self.wp = []  ## Set waypoint
         with open("waypoints.txt", 'r') as file:
             for line in file:
                 line = line.strip()
                 try:
                     point = list(map(float, line.split()))
                     rounded_point = [round(num, 1) for num in point]
-                    wp.append(rounded_point)
+                    self.wp.append(rounded_point)
                 except:
                     pass
-        self.env.wp_end = len(wp)
+        self.env.wp_end = len(self.wp)
 
-        wp_idx = 0  ## Rest env
-        self.obs, info = self.env.reset(set_goal=wp[wp_idx])
-        print("\n\nWaypoint Index = ", wp_idx)
+        self.wp_idx = 0  ## Rest env
+        self.obs, info = self.env.reset(set_goal=self.wp[self.wp_idx])
+        print("\n\nWaypoint Index = ", self.wp_idx, self.wp[self.wp_idx])
         print(info['task'])
         print("init_state : ", info['state'], "heading[deg] : ", np.degrees(info['state'][2]))
         print("goal : ", info['goal'])
         print("obstacle : ", info['obstacle'])
         print("---------------------")
         print("obs : ", self.obs)
-        wp_idx += 1
+        self.wp_idx += 1
 
 
     def callback_navigation(self, msg):
         """Callback function for navigation topic subscriber."""
-        self.obs = self.calculate_observation
-
-        action, _states = self.model.predict(self.obs, deterministic=True)
-        # self.obs, reward, terminated, _, info = self.env.step(action)
-
-        self.uart_tx(action)
-        self.publish_control_input(action)
-
+        if (self.loop%10 == 0): # 100Hz -> 10Hz
+            self.obs = self.update_observation(msg)
+            action, _states = self.model.predict(self.obs, deterministic=True)
+            # self.obs, reward, terminated, _, info = self.env.step(action)
+            self.uart_tx(action)
+        self.loop += 1
 
     def callback_gcs(self, msg):
         """Callback function for GCS topic subscriber."""
@@ -117,9 +115,32 @@ class RLControl(Node):
         self.key_steer = msg.angular.z
         self.key_esc = msg.linear.x
 
-    def calculate_observation(self):
+    def update_observation(self, msg):
         ## obs :  [8.8  8.3  0.98916256  4.7  4.35  0.9985859  3.9  1.7453293  0.  ]
-        self.obs[0] = 1
+        wp = self.wp[self.wp_idx]
+        pos = [msg.position.x, msg.position.y]  # [North, East]
+       
+        qx = msg.quaternion.x
+        qy = msg.quaternion.y
+        qz = msg.quaternion.z
+        qw = msg.quaternion.w
+        eulr = quat2eulr([qw, qx, qy, qz])
+        Roll = eulr[0] * 180/math.pi
+        Pitch = eulr[1] * 180/math.pi
+        Yaw = eulr[2] * 180/math.pi
+
+        speed = np.sqrt(msg.velocity.x**2 + msg.velocity.y**2)
+        
+        self.obs[0] = np.abs(wp[0] - pos[0])   		# vehicle~goal distance x
+        self.obs[1] = np.abs(wp[1] - pos[1])		# vehicle~goal distance y
+        self.obs[2] = calc_delta_angle(wp, pos, Yaw)	# vehicle~goal delta angle
+        self.obs[3] = 0 	# vehicle~obstacle distance x
+        self.obs[4] = 0 	# vehicle~obstacle distance y
+        self.obs[5] = 0 	# vehicle~obstacle delta angle
+        self.obs[6] = 0 	# obstacle radius
+        self.obs[7] = Yaw 	# vehicle heading
+        self.obs[8] = speed	# vehicle speed
+
         return self.obs
 
 
@@ -160,15 +181,27 @@ class RLControl(Node):
         if (conVel <= self.ESC_PWM_MIN):
             conVel = self.ESC_PWM_MIN
 
-        msgs = struct.pack('>BBHHHH', 0xff, 0xfe, conStr, conVel, self.command >> 8, self.command & 0xff)
-        self.serial_port.write(msgs)
+        print(">>>>>. ", conStr, conVel, self.command)
+
+        msgs = bytearray(8)
+        msgs[0] = 0xff
+        msgs[1] = 0xfe
+        msgs[2] = (conStr >> 8) & 0xff
+        msgs[3] = conStr & 0xff
+        msgs[4] = (conVel >> 8) & 0xff
+        msgs[5] = conVel & 0xff
+        msgs[6] = (self.command >> 8) & 0xff
+        msgs[7] = self.command & 0xff
+
+        self.ser.write(msgs)
+        self.publish_control_input(conStr, conVel, self.command)
 
 
-    def publish_control_input(self, act):
+    def publish_control_input(self, val1, val2, val3):
         msg = Vector3()
-        msg.x = act[0]  # steering
-        msg.y = act[1]  # accel
-        msg.z = self.mode
+        msg.x = float(val1)  # steering
+        msg.y = float(val2)  # accel
+        msg.z = float(val3)
         self.pub_ctrl.publish(msg)
 
 
