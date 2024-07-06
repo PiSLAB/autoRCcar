@@ -53,6 +53,7 @@ autoRCcar_outdoor
   ├── autorccar_navigation : GNSS/INS EKF
   ├── autorccar_path_planning : bezier curve
   ├── autorccar_control : pure pursuit
+  ├── autorccar_rl_control : car control based on reinforcement learning (New)
   │
   ├── autorccar_esp32 : PWM generator (Arduino IDE)
   │
@@ -99,6 +100,12 @@ ros2 run autorccar_gcs autorccar_gcs
 ### (Optional) Keyboard Control
 ```bash
 ros2 run autorccar_keyboard keyboard_control
+```
+### (New) Reinfocement Learning
+To be updated
+```bash
+cd ~/ros2_ws/src/autoRCcar_outdoor/autorccar_rl_control/autorccar_rl_control
+python rl_control.py
 ```
 ## Reference
 - Control) https://github.com/AtsushiSakai/PythonRobotics
