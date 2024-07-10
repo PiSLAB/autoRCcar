@@ -1,5 +1,3 @@
 .vscode
 __pycache__
 ../autoRCcar_gym/autoRCcar_gym.egg
-autorccar_navigation/example/test_ekf
-
