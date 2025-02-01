@@ -51,7 +51,8 @@ class RLControl(Node):
         self.key_esc = None
         self.dt = 0.1
         self.loop = 0
-
+        self.wp_dist = 9999
+        
         self.ESC_PWM_MIN = 3277
         self.ESC_PWM_N = 4915
         self.ESC_PWM_MAX = 6553
@@ -104,6 +105,9 @@ class RLControl(Node):
             action, _states = self.model.predict(self.obs, deterministic=True)
             # self.obs, reward, terminated, _, info = self.env.step(action)
             self.uart_tx(action)
+            
+        self.wp_dist = self.check_arrive_wp(msg)
+            
         self.loop += 1
 
     def callback_gcs(self, msg):
@@ -114,6 +118,17 @@ class RLControl(Node):
         """Callback function for keyboard control topic subscriber."""
         self.key_steer = msg.angular.z
         self.key_esc = msg.linear.x
+        
+    def check_arrive_wp(self, msg):
+        wp = np.array(self.wp[self.wp_idx])
+        pos = np.array([msg.position.x, msg.position.y])
+        delta_distance = np.linalg.norm(pos - wp)
+        if delta_distance < 2:  # Next waypoint within 2m
+            self.wp_idx += 1
+        if self.wp_idx >= self.env.wp_end:
+            self.command == 0
+        return delta_distance
+        
 
     def update_observation(self, msg):
         ## obs :  [8.8  8.3  0.98916256  4.7  4.35  0.9985859  3.9  1.7453293  0.  ]
@@ -181,7 +196,7 @@ class RLControl(Node):
         if (conVel <= self.ESC_PWM_MIN):
             conVel = self.ESC_PWM_MIN
 
-        print(">>>>>. ", conStr, conVel, self.command)
+        print(">>>>>. ", conStr, conVel, self.command, "\twp idx : ", self.wp_idx, "/", self.env.wp_end, "/",round(self.wp_dist,2))
 
         msgs = bytearray(8)
         msgs[0] = 0xff
